@@ -22,6 +22,13 @@ const feedURLs=[
  'https://sg-everyday-deals-bot.external-bot.workers.dev/deals.json'
 ];
 let loading=false,lastUpdated=null;
+const dealKey=d=>{
+ const source=String(d?.source||'').trim().replace(/\/$/,'').toLowerCase();
+ if(source)return 'source:'+source;
+ const id=String(d?.id||'').trim().toLowerCase();
+ if(id)return 'id:'+id;
+ return 'title:'+String(d?.title||'').trim().toLowerCase();
+};
 async function fetchLiveFeed(){
  let lastError;
  for(const url of feedURLs){
@@ -35,16 +42,67 @@ async function fetchLiveFeed(){
  }
  throw lastError||new Error('No live feed available');
 }
+async function fetchSavedFeed(){
+ try{
+  const response=await fetch('./deals.json',{cache:'no-cache',signal:AbortSignal.timeout(10000)});
+  if(!response.ok)throw new Error('Saved feed failed');
+  const data=await response.json();
+  return Array.isArray(data.deals)?data:{deals:[]};
+ }catch{return {deals:[]}}
+}
+function mergeDeals(liveDeals,savedDeals){
+ const savedByKey=new Map();
+ for(const d of savedDeals||[]){
+  const key=dealKey(d);
+  if(key)savedByKey.set(key,d);
+ }
+
+ const merged=[];
+ const seen=new Set();
+
+ for(const live of liveDeals||[]){
+  const key=dealKey(live);
+  const saved=savedByKey.get(key);
+  const enriched=saved?{
+   ...saved,
+   ...live,
+   image:live.image||saved.image||'',
+   telegram:live.telegram||saved.telegram||'',
+   caption:live.caption||saved.caption||'',
+   summary:live.summary||saved.summary||'',
+   location:live.location||saved.location||'',
+   area:live.area||saved.area||'',
+   category:live.category||saved.category||'',
+   startsAt:live.startsAt||saved.startsAt||null,
+   endsAt:live.endsAt||saved.endsAt||null,
+   checked:live.checked||saved.checked||null
+  }:live;
+  merged.push(enriched);
+  if(key)seen.add(key);
+ }
+
+ for(const saved of savedDeals||[]){
+  const key=dealKey(saved);
+  if((!key||!seen.has(key))&&isActive(saved)){
+   merged.push(saved);
+   if(key)seen.add(key);
+  }
+ }
+
+ return merged;
+}
 async function loadDeals(){
  if(loading)return;loading=true;
  try{
-  const data=await fetchLiveFeed();
-  deals=data.deals;lastUpdated=data.updatedAt;
-  $('updated').textContent=(lastUpdated?'Last live sync: '+fmt(lastUpdated,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})+' SGT · ':'')+'Checks for new deals every minute.';
+  const [data,saved]=await Promise.all([fetchLiveFeed(),fetchSavedFeed()]);
+  deals=mergeDeals(data.deals,saved.deals);
+  lastUpdated=data.updatedAt||saved.updatedAt;
+  $('updated').textContent=(lastUpdated?'Last live sync: '+fmt(lastUpdated,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})+' SGT · ':'')+'Live deals plus saved active deals · checks every minute.';
   render();
  }catch{
-  if(!deals.length){try{const r=await fetch('./deals.json',{cache:'no-cache'});const data=await r.json();deals=data.deals||[];lastUpdated=data.updatedAt;}catch{}}
-  $('updated').textContent='Live sync temporarily unavailable. Showing saved deals'+(lastUpdated?' from '+fmt(lastUpdated,{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})+' SGT':'')+'. Retrying automatically.';
+  const saved=await fetchSavedFeed();
+  if(!deals.length){deals=(saved.deals||[]).filter(isActive);lastUpdated=saved.updatedAt;}
+  $('updated').textContent='Live sync temporarily unavailable. Showing saved active deals'+(lastUpdated?' from '+fmt(lastUpdated,{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})+' SGT':'')+'. Retrying automatically.';
   render();
  }finally{loading=false;}
 }
