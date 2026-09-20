@@ -17,20 +17,34 @@ function reset(){selectedCategories.clear();selectedAreas.clear();$('search').va
 function openDeal(id){const d=deals.find(x=>x.id===id);if(!d||!isActive(d))return;$('detail-content').innerHTML=`${safeURL(d.image)?`<img class="detail-image" src="${escapeHTML(safeURL(d.image))}" alt="Official offer artwork" referrerpolicy="no-referrer">`:''}<div class="detail-body"><p class="eyebrow">${escapeHTML(d.category)} · ${escapeHTML(d.area)}</p><h2 id="detail-title">${escapeHTML(shortTitle(d))}</h2><div class="detail-caption">${escapeHTML(d.caption)}</div><div class="detail-links">${safeURL(d.source)?`<a href="${escapeHTML(safeURL(d.source))}" target="_blank" rel="noopener noreferrer">Official details ↗</a>`:''}${safeURL(d.telegram)?`<a class="secondary" href="${escapeHTML(safeURL(d.telegram))}" target="_blank" rel="noopener noreferrer">View Telegram post ↗</a>`:''}</div></div>`;$('detail-content').querySelector('img')?.addEventListener('error',e=>e.target.remove(),{once:true});$('detail').showModal()}
 $('categories').addEventListener('click',e=>{const b=e.target.closest('[data-category]');if(!b)return;const c=b.dataset.category;if(c==='All finds')selectedCategories.clear();else if(selectedCategories.has(c))selectedCategories.delete(c);else selectedCategories.add(c);limit=12;drawCategories();render()});$('areas').addEventListener('click',e=>{const b=e.target.closest('[data-area]');if(!b)return;const a=b.dataset.area;if(!a)selectedAreas.clear();else if(selectedAreas.has(a))selectedAreas.delete(a);else selectedAreas.add(a);limit=12;drawAreas();render()});$('grid').addEventListener('click',e=>{const b=e.target.closest('[data-deal]');if(b)openDeal(b.dataset.deal)});['search','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',()=>{limit=12;render()}));$('reset').addEventListener('click',reset);$('more').addEventListener('click',()=>{limit+=12;render()});$('close').addEventListener('click',()=>$('detail').close());$('detail').addEventListener('click',e=>{if(e.target===$('detail')){const r=$('detail').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('detail').close()}});document.addEventListener('keydown',e=>{if(e.key==='/'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)&&!$('detail').open){e.preventDefault();$('search').focus()}});const backToTop=$('back-to-top');window.addEventListener('scroll',()=>backToTop.classList.toggle('visible',window.scrollY>500),{passive:true});backToTop.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'}));
 $('today').textContent=fmt(new Date(),{day:'numeric',month:'short',year:'numeric'});drawCategories();drawAreas();
-const feedURL='https://sg-everyday-deals-bot.external-bot.workers.dev/deals.json';
+const feedURLs=[
+ 'https://pynwgripqadlcxtrfhmd.supabase.co/functions/v1/website-deals',
+ 'https://sg-everyday-deals-bot.external-bot.workers.dev/deals.json'
+];
 let loading=false,lastUpdated=null;
+async function fetchLiveFeed(){
+ let lastError;
+ for(const url of feedURLs){
+  try{
+   const response=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(15000)});
+   if(!response.ok)throw new Error('Load failed: '+response.status);
+   const data=await response.json();
+   if(!Array.isArray(data.deals))throw new Error('Invalid feed');
+   return data;
+  }catch(error){lastError=error}
+ }
+ throw lastError||new Error('No live feed available');
+}
 async function loadDeals(){
  if(loading)return;loading=true;
  try{
-  const response=await fetch(feedURL,{cache:'no-store',signal:AbortSignal.timeout(15000)});
-  if(!response.ok)throw new Error('Load failed');
-  const data=await response.json();if(!Array.isArray(data.deals))throw new Error('Invalid feed');
+  const data=await fetchLiveFeed();
   deals=data.deals;lastUpdated=data.updatedAt;
-  $('updated').textContent=(lastUpdated?'Last published update: '+fmt(lastUpdated,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})+' SGT · ':'')+'Updates automatically every minute.';
+  $('updated').textContent=(lastUpdated?'Last live sync: '+fmt(lastUpdated,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})+' SGT · ':'')+'Checks for new deals every minute.';
   render();
  }catch{
   if(!deals.length){try{const r=await fetch('./deals.json',{cache:'no-cache'});const data=await r.json();deals=data.deals||[];lastUpdated=data.updatedAt;}catch{}}
-  $('updated').textContent='Live updates temporarily unavailable. Showing saved deals'+(lastUpdated?' from '+fmt(lastUpdated,{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})+' SGT':'')+'. Retrying automatically.';
+  $('updated').textContent='Live sync temporarily unavailable. Showing saved deals'+(lastUpdated?' from '+fmt(lastUpdated,{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})+' SGT':'')+'. Retrying automatically.';
   render();
  }finally{loading=false;}
 }
